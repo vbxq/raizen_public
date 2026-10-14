@@ -1,0 +1,62 @@
+name: Deploy to GitHub Pages
+
+# The site is the built web version, committed in site/: nothing is compiled
+# here, the folder is published as it is. game.bin is not tracked in git (it is
+# larger than the 100 MiB per-file limit); it is downloaded from the latest
+# release at build time and added to the published site, so the page can load
+# it from the same origin (eiyasho.celeste.gg/game.bin) with no CORS.
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Package the site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v5
+
+      - name: Fetch game.bin from the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+             --pattern game.bin --output site/game.bin
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+             --pattern start.pack.json --output site/start.pack.json
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" \
+             --pattern game.meta.json --output site/game.meta.json
+          echo "game.bin from $tag: $(stat -c %s site/game.bin) bytes"
+          echo "start.pack.json: $(stat -c %s site/start.pack.json) bytes"
+          echo "game.meta.json: $(stat -c %s site/game.meta.json) bytes"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Pages artifact
+        id: deployment
+        uses: actions/deploy-pages@v4
